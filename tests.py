@@ -1,18 +1,43 @@
-import typing as tp
-import requests
-import json
-
-from pprint import pprint
-import asyncio
 import aiohttp
+import asyncio
+import json
+import requests
+import typing as tp
 
 url = 'https://api.open-meteo.com/v1/forecast'
 
 
 class APIRequest:
-    def __init__(self, url, params):
+    def __init__(self, url: str, params: tp.Dict[str, tp.Any]):
         self.url = url
         self.params = params
+    
+    def perform_request(self) -> None:
+        url_str = self.make_full_url()
+
+        status, content, timeout = None, None, False
+
+        try:
+            resp = requests.get(url_str, timeout=1)
+            status = resp.status_code
+            content = json.loads(resp.content)
+        except requests.exceptions.ReadTimeout as e:
+            timeout = True
+
+        return APIResponse(status, content, timeout)
+
+    def make_full_url(self):
+        params_str = (
+            ""
+            if not self.params else
+            '&'.join(f"{k}={','.join(v) if isinstance(v, list) else v}" for (k, v) in self.params.items())
+        )
+        url_str = (
+            self.url
+            if not params_str else
+            f"{self.url}?{params_str}"
+        )
+        return url_str
 
 
 class APIResponse:
@@ -22,28 +47,7 @@ class APIResponse:
         self.timeout = timeout
 
 
-def perform_request(url: str, params: tp.Dict[str, tp.Any]) -> None:
-    params_str = (
-        ""
-        if not params else
-        '&'.join(f"{k}={','.join(v) if isinstance(v, list) else v}" for (k, v) in params.items())
-    )
-    url_str = (
-        url
-        if not params_str else
-        f"{url}?{params_str}"
-    )
 
-    status, content, timeout = None, None, False
-
-    try:
-        resp = requests.get(url_str, timeout=1)
-        status = resp.status_code
-        content = json.loads(resp.content)
-    except requests.exceptions.ReadTimeout as e:
-        timeout = True
-
-    return APIResponse(status, content, timeout)
 
 
 def test_functional():
@@ -85,9 +89,9 @@ def test_functional():
         ),
     ]
     
-    reses = [perform_request(r.url, r.params) for r in reqs]
+    reses = [r.perform_request() for r in reqs]
 
-    assert not any([res.timeout for res in reses]), "Some of the requests timed out"
+    assert all([not res.timeout for res in reses]), "Some of the requests timed out (try running the tests again)"
     assert all([res.status == 200 for res in reses]), "Some of the requests did not finish with OK"
     assert reses[0].status == 200 and len(reses[0].content['hourly']['time']) == len(reses[0].content['hourly']['temperature_2m']), "Data and time lists should have the same length"
     assert reses[1].status == 200 and len(reses[1].content['hourly']['temperature_2m']) == len(reses[1].content['hourly']['relativehumidity_2m']), "Data lists should have the same length"
@@ -119,10 +123,11 @@ def test_stress():
             'hourly': 'temperature_2m',
         },
     )
+    url_str = req.make_full_url()
 
-    asyncio.run(stress(url, 10, 0.5))   # SHORT STRESS
-    asyncio.run(stress(url, 100, 1))    # MODERATE STRESS
-    asyncio.run(stress(url, 1000, 5))   # LONG STRESS
+    asyncio.run(stress(url_str, 10, 0.5))   # SHORT STRESS
+    asyncio.run(stress(url_str, 100, 1))    # MODERATE STRESS
+    asyncio.run(stress(url_str, 1000, 5))   # LONG STRESS
 
 
 def test_negative():
@@ -156,6 +161,7 @@ def test_negative():
         )
     ]
 
-    reses = [perform_request(r.url, r.params) for r in reqs]
+    reses = [r.perform_request() for r in reqs]
 
+    assert all([not res.timeout for res in reses]), "Some of the requests timed out (try running the tests again)"
     assert not all([res.status == 400 for res in reses]), "Some of the requests did not finish with Bad Request"
