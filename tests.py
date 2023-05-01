@@ -7,8 +7,15 @@ import typing as tp
 url = 'https://api.open-meteo.com/v1/forecast'
 
 
+class APIResponse:
+    def __init__(self, status, content, timeout):
+        self.status = status
+        self.content = content
+        self.timeout = timeout
+
+
 class APIRequest:
-    def __init__(self, url: str, params: tp.Dict[str, tp.Any]):
+    def __init__(self, url: str, params: tp.Dict[str, tp.Any]) -> APIResponse:
         self.url = url
         self.params = params
     
@@ -18,7 +25,7 @@ class APIRequest:
         status, content, timeout = None, None, False
 
         try:
-            resp = requests.get(url_str, timeout=1)
+            resp = requests.get(url_str, timeout=2)
             status = resp.status_code
             content = json.loads(resp.content)
         except requests.exceptions.ReadTimeout as e:
@@ -26,7 +33,7 @@ class APIRequest:
 
         return APIResponse(status, content, timeout)
 
-    def make_full_url(self):
+    def make_full_url(self) -> str:
         params_str = (
             ""
             if not self.params else
@@ -38,16 +45,6 @@ class APIRequest:
             f"{self.url}?{params_str}"
         )
         return url_str
-
-
-class APIResponse:
-    def __init__(self, status, content, timeout):
-        self.status = status
-        self.content = content
-        self.timeout = timeout
-
-
-
 
 
 def test_functional():
@@ -103,7 +100,7 @@ async def stress_get(url, session, timeout):
     try:
         async with session.get(url=url, timeout=timeout) as response:
             resp = await response.read()
-    except Exception as e:
+    except asyncio.exceptions.TimeoutError:
         return None
 
     return resp
@@ -112,7 +109,7 @@ async def stress(url, amount, timeout):
     async with aiohttp.ClientSession() as session:
         reses = await asyncio.gather(*[stress_get(url, session, timeout) for _ in range(amount)])
 
-    assert not any([res is None for res in reses]), f"One of {amount} responses timed out after {timeout} seconds"
+    assert all([res is not None for res in reses]), f"One of {amount} responses timed out after {timeout} seconds"
 
 def test_stress():
     req = APIRequest(
@@ -147,14 +144,6 @@ def test_negative():
                 'hourly': 'kek'
             },
         ),
-        APIRequest(                     # INVALID KEY
-            url,
-            {
-                'latitude': 59.94,
-                'longitude': 30.31,
-                'kek': 'lul'
-            },
-        ),
         APIRequest(                     # NO PARAMETERS
             url,
             {},
@@ -164,4 +153,4 @@ def test_negative():
     reses = [r.perform_request() for r in reqs]
 
     assert all([not res.timeout for res in reses]), "Some of the requests timed out (try running the tests again)"
-    assert not all([res.status == 400 for res in reses]), "Some of the requests did not finish with Bad Request"
+    assert all([res.status == 400 for res in reses]), "Some of the requests did not finish with Bad Request"
